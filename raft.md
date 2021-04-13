@@ -61,6 +61,26 @@ commitIndex、peer等
 
 存储:内存&文件
 ```
+type server struct {
+	*eventDispatcher
+
+	name        string
+	path        string
+	// Leader、Follower 或者 Candidate
+	state       string
+	transporter Transporter
+	context     interface{}
+	// 代表它所感知的全局的Term情况
+	currentTerm uint64
+
+	votedFor   string
+	log        *Log
+    // 代表它所感知的全局的leader情况
+	leader     string
+	peers      map[string]*Peer
+}
+```
+```
 type Log struct {
 	ApplyFunc   func(*LogEntry, Command) (interface{}, error)
 	file        *os.File
@@ -116,10 +136,32 @@ Leader --> Follower
 
 #### 3.1 什么时候开始选举？
 
-#### 3.2 投票相关
+#### 3.2 投票相关--如何处理VoteRequest
 看参考资料1.4 的演示动画     
 ![](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20210412/dcd25458-9b48-11eb-8c3e-784f43a6cab8.png)
-这个时候，谁可能被选为leader, 注意：raft协议中这样的要求
+
+#### 3.2.1 一个Term期间，最多只能投出1票
+```
+// VoteRequest中的Term，必须大于本地的currentTerm
+	if req.Term < s.Term() {
+		s.debugln("server.rv.deny.vote: cause stale term")
+		return newRequestVoteResponse(s.currentTerm, false), false
+	}
+
+	// If the term of the request peer is larger than this node, update the term
+	// If the term is equal and we've already voted for a different candidate then
+	// don't vote for this candidate.
+// VoteRequest中的Term，如果大于本地的currentTerm，则更新本地的currentTerm
+	if req.Term > s.Term() {
+		s.updateCurrentTerm(req.Term, "")
+	} else if s.votedFor != "" && s.votedFor != req.CandidateName {
+		s.debugln("server.deny.vote: cause duplicate vote: ", req.CandidateName,
+			" already vote for ", s.votedFor)
+		return newRequestVoteResponse(s.currentTerm, false), false
+	}
+```
+#### 3.2.2 获得投票需要满足的条件
+raft协议中这样的要求
 
 > candidate’s log is at least as up-to-date as receiver’s log then vote
 
@@ -128,8 +170,18 @@ Leader --> Follower
 * candidate.LastLogTerm >= receiver.LastLogTerm
 * candidate.LastLogIndex >= receiver.LastLogIndex
 
+**注意**: Log中有擦除情况出现，所以条件1是必须的
+
 #### 3.3 当选&当选后的一系列动作
 
+* 获得`majority`投票的候选人当选为`Leader`
+* 通过心跳压制其它`Candidate`
+* 写入`NOPCommand`
+
+[聊聊RAFT的一个实现(4)–NOPCOMMAND](http://vearne.cc/archives/1851)
+
+#### 3.4 一种极端场景
+![](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20210413/b6749fc6-9bfe-11eb-8307-784f43a6cab8.jpeg)
 
 ### 4. Log Replication(数据写入)
 
@@ -181,6 +233,7 @@ curl -v 'http://dev1:8500/v1/health/service/es?dc=dc1&passing=1&stale
 
 #### 5.4 watch是怎么回事？
 [玩转CONSUL(1)–WATCH机制探究](http://vearne.cc/archives/13983)
+
 
 
 
