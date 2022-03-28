@@ -1,5 +1,3 @@
-# Golang协程调度
-
 本文基于go1.17.6
 
 ## 1.什么是协程？
@@ -18,7 +16,7 @@
 
 ![GMP模型](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20220324/fe1d69f6-ab1c-11ec-8a17-5626e1cdcfe2.jpeg)
 
-* CPU驱动线程上的任务被执行
+* CPU驱动线程上的任务执行
 * 线程由操作系统内核进行调度，Goroutine由Golang运行时(runtime)进行调度
 * P的 `local runnable queue`是无锁的，`global runnable queue`是有锁的
 * P的 `local runnable queue`长度限制为256
@@ -61,10 +59,9 @@ timer的四叉堆和内存分配器使用的mcache也是每个P一个
 
 ## 2. 常见的Goroutine 让出/调度/抢占场景
 
-### 2.1 协程被创建
-
 ![Goroutine状态机](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20220324/13b29e76-ab22-11ec-9d99-5626e1cdcfe2.png)
 
+### 2.1 协程被创建
 * 1)P的本地队列有剩余空间时，放入P的本地队列
 * 2)P的本地队列没有剩余空间时，将本地队列的一部分Goroutine以及待加入的Goroutine添加到全局队列
 
@@ -261,14 +258,21 @@ sighandler() -> doSigPreempt() -> asyncPreempt()->  globalrunqput()
 asyncPreempt由汇编实现 [preempt_amd64.s](https://github.com/golang/go/blob/master/src/runtime/preempt_amd64.s)
 
 ### 2.4 hand off p
+![](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20220325/5a43f5a0-abf0-11ec-8586-5626e1cdcfe2.png)
 
-#### 场景 syscall.Syscall()--读写网络连接
+#### 场景读写磁盘文件 
+涉及syscall.Syscall()
+####  注意:
+
+* 由于handeroff机制的存在，读写磁盘文件的过程中，如果IO的压力过大可能会导致大量的系统线程被创建
+* 在Golang中(Linux平台)，读写网络连接是非阻塞的边缘触发
+* 在Golang中(Linux平台)，读写磁盘文件是阻塞式系统调用
 
 ```
-netFD.Read() -> poll.FD.Read() -> syscall.Read() -> syscall.Syscall()
+File.Read() -> poll.FD.Read() -> syscall.Read() -> syscall.Syscall()
 ```
 
-[net/fd_unix.go](https://github.com/golang/go/blob/master/src/net/fd_unix.go)
+[poll/fd_unix.go](https://github.com/golang/go/blob/master/src/internal/poll/fd_unix.go#L143)
 
 ```
 // Read implements io.Reader.
@@ -311,22 +315,26 @@ func read(fd int, p []byte) (n int, err error) {
 
 ![](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20220324/cdef09d2-ab5e-11ec-b119-5626e1cdcfe2.jpeg)
 
-#### entersyscall()
+#### 2.4.1 entersyscall()
 
 ![](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20220324/d1e53204-ab5f-11ec-9efe-5626e1cdcfe2.jpeg)
 进入系统调用的goroutine会阻塞，导致内核M会阻塞。此时P会被剥离掉， 所以P可以继续去获取其余的空闲M执行其余的goroutine。
 
-#### 阻塞式系统调用长期运行将会导致的流程
+#### 2.4.2 阻塞式系统调用长期运行将会导致的流程
 
 ```
 sysmon() -> retake() -> handoffp()
 ```
+如果P的本地队列不为空，handoffp()会尝试获取一个M来运行P
+M有2种来源:
+* 1）`midle`: idle m's waiting for work
+* 2）newm() 创建一个新M
 
-#### exitsyscall()
+#### 2.4.3 exitsyscall()
 
 ![](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20220324/d3d713fc-ab5f-11ec-8934-5626e1cdcfe2.jpeg)
 
-![](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20220325/5a43f5a0-abf0-11ec-8586-5626e1cdcfe2.png)
+
 
 ### 2.5 系统调用
 
@@ -431,11 +439,13 @@ chanrecv1() -> chanrecv() ->  hchan.sendq.dequeue() -> recv() -> goready()
 ![](http://ut-bucket01.sh1a.qingstor.com/woshiaotian/20220105/4ee5c66e-6dd6-11ec-b958-1e00da114f95.png)
 
 ### 3.参考资料
-1. [g0-特殊的goroutine](https://blog.haohtml.com/archives/22353)
-2. [golang syscall原理](https://blog.csdn.net/u010853261/article/details/88312904)
-3. [Linux中的EAGAIN含义](https://www.cnblogs.com/pigerhan/archive/2013/02/27/2935403.html)
-4. [Golang-gopark函数和goready函数原理分析](https://blog.csdn.net/u010853261/article/details/85887948)
-5. [幼麟实验室-协程让出、抢占、监控和调度](https://www.bilibili.com/video/BV1zT4y1F7XF?spm_id_from=333.337.search-card.all.click)
-6. [Golang 调度器 GMP 原理与调度全分析](https://learnku.com/articles/41728)
-7. [time.Sleep(1) 后发生了什么](https://jishuin.proginn.com/p/763bfbd2f770)
-8. [mcall systemstack等汇编函数](https://studygolang.com/articles/28553)
+1.[g0-特殊的goroutine](https://blog.haohtml.com/archives/22353)
+2.[golang syscall原理](https://blog.csdn.net/u010853261/article/details/88312904)
+3.[Linux中的EAGAIN含义](https://www.cnblogs.com/pigerhan/archive/2013/02/27/2935403.html)
+4.[Golang-gopark函数和goready函数原理分析](https://blog.csdn.net/u010853261/article/details/85887948)
+5.[幼麟实验室-协程让出、抢占、监控和调度](https://www.bilibili.com/video/BV1zT4y1F7XF?spm_id_from=333.337.search-card.all.click)
+6.[Golang 调度器 GMP 原理与调度全分析](https://learnku.com/articles/41728)
+7.[time.Sleep(1) 后发生了什么](https://jishuin.proginn.com/p/763bfbd2f770)
+8.[mcall systemstack等汇编函数](https://studygolang.com/articles/28553)
+
+
