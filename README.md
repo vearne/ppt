@@ -19,3 +19,6 @@ RocketMQ.pdf
 ### Golang协程调度
 Golang_schedule.pdf
 
+### k8s
+k8s.pdf
+
