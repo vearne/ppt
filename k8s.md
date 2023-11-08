@@ -32,6 +32,8 @@
 
 ### 3. k8s网络模型
 
+### 4. k8s使用小贴士
+
 ---
 
 ### 1. k8s架构
@@ -387,7 +389,16 @@ Kubernetes Service也有域名，其形式为`<service-name>.<namespace>.svc.clu
 
 
 
+### 4. k8s使用小贴士
 
+#### 4.1 通过API网关访问服务
 
+![](https://ut-bucket01.sh1a.qingstor.com/woshiaotian/20231108/9c19a660-7de4-11ee-9e81-5626e1cdcfe2.png)
 
+#### 4.2 DeployMent
 
+* 如果一个Deployment对象的名称不变，修改它的属性通常会触发滚动发布（Rolling Update）
+
+* 修改一个Deployment对象的名称
+
+  相当于删除一个旧的Deployment对象，并创建一个新的Deployment对象， **会导致之前Deployment关联的Pod被全部删除无法达到平滑升级的目的**。
